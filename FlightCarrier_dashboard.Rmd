@@ -1,0 +1,278 @@
+---
+title: Flight carrier presentation
+author: "Dawid Stepanovic"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    output: html
+---
+
+```{r global, include=FALSE}
+library(knitr)
+library(markdown)
+library(flexdashboard)
+library(data.table)
+library(RPostgres)
+library(dplyr)
+library(DT)
+library(formattable)
+library(shiny)
+library(crosstalk)
+library(leaflet)
+library(plotly)
+library(forcats)
+library(highcharter)
+library(htmlwidgets)
+library(lubridate)
+con = dbConnect( RPostgres::Postgres(), user= 'postgres',  password = '', host = 'localhost', port = '5433', dbname='postgres')
+```
+
+```{r, include=FALSE}
+
+list = data.table(dbGetQuery(con,'SELECT * FROM public."list"'))
+list2 = data.table(dbGetQuery(con,'SELECT * FROM public."list_all"'))
+df = data.table(dbGetQuery(con,'SELECT * FROM public."FlightScheduleExtract"'))
+df2 = data.table(dbGetQuery(con,'SELECT * FROM public."Routing_Bundles"'))
+airports = data.table(dbGetQuery(con,'SELECT * FROM public."airports"'))
+hist = data.table(dbGetQuery(con,'SELECT * FROM public."list_histogram"'))
+seg = data.table(dbGetQuery(con,'SELECT * FROM public."list_segment"'))
+
+```
+
+Overview {data-icon="fa-globe"}
+=======================================================================
+
+Column {data-width=150} 
+-----------------------------------------------------------------------
+
+### Chart 1
+```{r}
+mindate = min(as.Date(df2$departure_time)) 
+maxdate = max(as.Date(df2$departure_time))
+mindatepaste = paste0(format(as.Date(mindate,format="%Y-%m-%d"), "%d"),". ",months(as.Date(mindate)))
+maxdatepaste = paste0(format(as.Date(maxdate,format="%Y-%m-%d"), "%d"),". ",months(as.Date(maxdate)))
+valueBox("30 April - 03 August", caption = "Time period - Flight carrier data", icon = "fa fa-calendar")
+```
+
+### Chart 2
+```{r}
+air = df %>% filter(`surface_or_air`=="AIR") %>% nrow()
+valueBox(value = air, caption = "Flight schedule - air transports", icon="fa fa-plane")
+
+```
+
+### Chart 3
+```{r}
+surface = df %>% filter(`surface_or_air`=="SURFACE") %>% nrow()
+valueBox(value = surface, caption = "Flight schedule - road transports", icon="fas fa-truck")
+```
+
+Column {data-width=150} 
+-----------------------------------------------------------------------
+### Chart 4
+```{r}
+routes = list2 %>% select(flight_leg) %>%  distinct(flight_leg) %>%  summarise(routes = n())
+dest = airports %>% summarise(count = n()) 
+valueBox(value = paste(dest,' / ',routes), caption = "Flight carrier - destinations/routes", icon="fas fa-globe", color = '#008B8B')
+``` 
+
+### Chart 5
+```{r}
+air2 = list2 %>% filter(`transport_type`=="AIR") %>% nrow()
+valueBox(value = air2, caption = "Flight carrier - air transports", icon="fa fa-plane", color = '#008B8B')
+```
+
+### Chart 6
+```{r}
+road = list2 %>% filter(`transport_type`=="ROAD") %>% nrow()
+valueBox(value = road, caption = "Flight carrier - road transports", icon="fas fa-truck", color = '#008B8B')
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### Map - click on the points on the map to see the airport name
+```{r}
+  leaflet() %>% 
+    addProviderTiles("Esri.WorldStreetMap") %>% 
+    setView(lng = 0, lat = 30, zoom = 03) %>% 
+    addTiles() %>%
+    addCircleMarkers(data = airports, lng = airports$lon, lat = airports$lat, 
+               popup = paste("Airport: ", airports$flight, "<br>", airports$airport),
+               fillColor = ~color,
+               fillOpacity = 0.6,
+               stroke = F,
+               radius = 8) %>%  
+               addLegend(label = c("origin", "destination", "origin and destination"), 
+               colors =  c("red;width:15px;height:15px;border-radius:70%","green;width:15px;height:15px;border-radius:70%",
+                           "blue;width:15px;height:15px;border-radius:70%"))
+  
+```
+
+
+1st Conclusion {data-icon="fa fa-caret-right"}
+=======================================================================
+
+Row
+-------------------------------------
+
+### Time period 
+```{r}
+mindate = min(as.Date(list$date_x)) 
+maxdate = max(as.Date(list$date_x))
+mindatepaste = paste0(format(as.Date(mindate,format="%Y-%m-%d"), "%d"),". ",months(as.Date(mindate)))
+maxdatepaste = paste0(format(as.Date(maxdate,format="%Y-%m-%d"), "%d"),". ",months(as.Date(maxdate)))
+valueBox("05 May - 03 August", icon = "fa fa-calendar")
+
+```
+
+### Carrier flights overall (routing bundle table)
+```{r}
+sum = list %>% select(flight_number, flight_number_y) %>%  summarise(overall = n(), noNA = sum(!is.na(flight_number_y)))
+valueBox(sum$overall, icon = "fa fa-plane")
+
+```
+
+### Carrier flights within flight schedule 
+```{r}
+sum = list %>% select(flight_number, flight_number_y) %>%  summarise(overall = n(), noNA = sum(!is.na(flight_number_y)))
+valueBox(sum$noNA, icon = "ion-ios-paper-outline")
+
+```
+
+### Carrier flights within schedule (in %) 
+```{r}
+sum = list %>% select(flight_number, flight_number_y) %>% summarise(overall = n(), noNA = sum(!is.na(flight_number_y))) 
+  gauge(round(sum$noNA/sum$overall*100,2), min = 0, max = 100, symbol = '%', gaugeSectors(
+  success = c(80, 100), warning = c(40, 79), danger = c(0, 39)
+))
+
+```
+
+row {data-width=600}
+-------------------------------------
+
+### Table overview
+```{r}
+tablelist = list %>% select(flight_number, date_x, flight_leg_x, flight_number_y, date_y, flight_leg, departure_time, arrival_time)  
+colnames(tablelist) = c('flight no. (routing)', 'date (routing)', 'flight leg (routing)', 'flight no. (schedule)', 'date  (schedule)', 'flight leg  (schedule)', 'departure time (routing)', 'arrival time (routing)') 
+
+tablelist_top =  tablelist %>% top_n(100)
+datatable(tablelist_top ,options = list(pageLength = 20,scrollX = TRUE, initComplete = JS(
+    "function(settings, json) {",
+    "$(this.api().table().header()).css({'background-color': '#F0FFF0', 'color': '#000'});",
+    "}")
+    )) %>% formatStyle(1:8,fontSize = '15px')
+```
+
+### Findings
+#### **Are all of the carriers' flights shown, if not, how could we better understand this?**
+
+I have joined the flight schedule data with the flight carrier routing bundles data (only air transport type data) using the flight number, the flight leg and the flight date to uniquely identify the carrier flights. Unfortunately, not all carrier flights can be found in the public flight schedule data, because of data inconsistencies. I just want to give some examples: 
+
+<ul>
+<li> the operating flight number of the leading operating carrier abbrev. "LY" is followed 4 numbers and has to be adapted </li> 
+<li> the same has to considered for the leading operating carrier abbrev. "TP" for operating flight numbers below 100, which are then followed by 3 numbers </li>
+<li> some flight data is missing in the public flight data, for example the flights "TP9518", "TP9191" or "P35292" - some of them presumably of confidential reasons </li>
+<li> some public flight data dates are different from the Flight carrier data dates because of time-lags due to time zoning </li>
+</ul>
+
+#### **SQL Code**
+<style>
+    pre {
+        border: 0;
+        display: table;
+        border-collapse: separate;
+        background-color: #F0FFF0;
+    }
+</style>
+
+```sql 
+SELECT *
+FROM 
+(
+	SELECT flight_number, SUBSTRING(departure_time,0,11)::date AS date_x, CONCAT(flight_origin,'-',flight_destination) AS flight_leg_x, departure_time, arrival_time
+	FROM public.RoutingBundles
+	WHERE transport_type = 'AIR'
+	GROUP BY date_x, flight_number, flight_leg_x, departure_time, arrival_time
+) AS X 
+LEFT JOIN (
+SELECT to_date(flight_date,'dd/mm/YYYY') AS date_y, 
+		CASE WHEN operating_carrier = 'LY' THEN CONCAT(operating_carrier, LPAD(operating_fltno::text, 4, '0'))
+			 WHEN operating_carrier = 'TP' AND operating_fltno < 100 THEN CONCAT(operating_carrier, LPAD(operating_fltno::text, 3, '0'))
+			 ELSE CONCAT(operating_carrier, operating_fltno) 
+		END AS flight_number_Y,
+		* 
+		FROM public.FlightScheduleExtract) AS Y 
+ON X.flight_number = Y.flight_number_Y AND X.date_x = Y.date_y AND X.flight_leg_x = Y.flight_leg; 
+
+```
+
+2nd Conclusion {data-icon="fa fa-caret-right"}
+=======================================================================
+
+Column {data-width=150} 
+-----------------------------------------------------------------------
+### Chart 1
+```{r}
+routing_b = df2 %>% select(routing_bundle) %>%  distinct(routing_bundle) %>%  summarise(count = n())
+valueBox(value = routing_b, caption = "Flight carrier - orders (overall routing bundles)", icon="fas fa-file-alt", color = '#008B8B')
+```
+
+### Chart 2
+```{r}
+flight_b = hist %>% summarise(flight_b = n())
+valueBox(value = flight_b, caption = "Flight carrier - flights (by routing bundle)", icon="fas fa-plane", color = '#008B8B')
+``` 
+
+### Chart 3
+```{r}
+valueBox(value = max(seg$num), caption = "Flight carrier - highest number of different routes by order", icon="far fa-clone", color = '#008B8B')
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### Figure of top 10 routing bundle routes
+```{r}
+hist_top20 = hist %>% group_by(flight_leg) %>%  summarise(count = n()) %>% arrange_(~ desc(count)) %>%  top_n(10)
+hist_top20 %>%  mutate(flight_leg = fct_reorder(flight_leg,count)) %>%  plot_ly(x = ~flight_leg, y = ~count, color = "MediumPurple", type = "bar") %>% 
+ layout(title = "Top 10 routing bundle routes", xaxis = list(title = "routes"),  yaxis = list(title = 'flights (by routing bundle)'))
+```
+
+### Figure of routing bundle routes by day
+
+```{r}
+time_b = hist %>%  select(time, flight_leg) %>%  group_by(time) %>%  summarise(count = n())
+
+plot_ly(time_b, x = ~time, y = ~count, type = 'bar') %>%  
+  layout(title = "Routing bundle routes by day", xaxis = list(title = "date"),  yaxis = list(title = 'flights (by routing bundle)'))
+
+```
+
+Row {.tabset}
+-------------------------------------
+
+### Findings
+#### **What could be improved to increase the number of offers on the shelf?**
+
+<ul>
+<li> the map in the overview section and the figure above show us that our main market is Europe (at least for the given data) </li>
+<li> the majority of shipments going from FRA to GRU </li>
+<li> 8 of the top 10 routes are operated from FRA and mostly shipped to overseas customers </li>
+</ul>
+
+### SQL Code
+#### **SQL Code**
+```sql 
+--Routes of routing bundles
+SELECT routing_bundle, CONCAT(routing_origin,'-',routing_destination) AS flight_leg, SUBSTRING(departure_time,0,11)::date AS TIME FROM public.RoutingBundles 
+WHERE segment_number = 1
+GROUP BY routing_bundle, flight_leg, departure_time
+
+--Highest number of different destinations by ordrer
+SELECT routing_bundle, COUNT(DISTINCT CONCAT(routing_origin,'-',routing_destination)) AS num FROM public.RoutingBundles
+GROUP BY routing_bundle
+ORDER BY num DESC
+```
